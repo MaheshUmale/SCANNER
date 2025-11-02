@@ -26,63 +26,86 @@ try:
 except Exception as e:
     print(f"Warning: Could not load TradingView cookies. Scanning will be disabled. Error: {e}")
 
-latest_scan_results = {
-    "post_market": pd.DataFrame(),
-    "intraday": pd.DataFrame()
-}
-data_lock = threading.Lock()
+class AppState:
+    def __init__(self):
+        self.all_fired_events = []
+        self.latest_scan_results = {"fired": pd.DataFrame()}
 
-def background_scanner():
-    """Function to run scans in the background."""
-    while True:
-        print("Running background scanner...")
-        with data_lock:
-            current_settings = scanner_settings.copy()
+    def add_fired_events(self, new_fired_events):
+        self.all_fired_events.extend(new_fired_events)
 
-        from scan import run_intraday_scan, run_post_market_scan
+    def get_all_fired_events(self):
+        return self.all_fired_events
 
-        # Run intraday scan
-        intraday_results = run_intraday_scan(current_settings, cookies)
+    def set_latest_scan_results(self, results):
+        self.latest_scan_results = results
 
-        # Run post-market scan (less frequently)
-        post_market_results = run_post_market_scan(current_settings, cookies)
+    def get_latest_scan_results(self):
+        return self.latest_scan_results
 
-        with data_lock:
-            global latest_scan_results
-            latest_scan_results["intraday"] = intraday_results
-            latest_scan_results["post_market"] = post_market_results
-
-        sleep(300) # Scan every 5 minutes
+app_state = AppState()
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/scan_post_market', methods=['POST', 'GET'])
-def scan_post_market():
-    """Triggers a new post-market scan."""
-    with data_lock:
-        current_settings = scanner_settings.copy()
-
-    from scan import run_post_market_scan
-    post_market_results = run_post_market_scan(current_settings, cookies)
-
-    with data_lock:
-        latest_scan_results["post_market"] = post_market_results
-
-    return jsonify({"status": "success", "results": post_market_results.to_dict(orient='records')})
-
 @app.route('/get_latest_data', methods=['GET'])
 def get_latest_data():
     """Returns the latest cached scan data."""
     with data_lock:
+        results = app_state.get_latest_scan_results()
         response_data = {
-            "post_market": latest_scan_results["post_market"].to_dict(orient='records'),
-            "intraday": latest_scan_results["intraday"].to_dict(orient='records')
+            "fired": results["fired"].to_dict(orient='records')
         }
     return jsonify(response_data)
 
+data_lock = threading.Lock()
+
+@app.route('/get_all_fired_events', methods=['GET'])
+def get_all_fired_events():
+    """Returns all fired squeeze events for the current day."""
+    with data_lock:
+        response_data = app_state.get_all_fired_events()
+    return jsonify(response_data)
+
+@app.route('/update_settings', methods=['POST'])
+def update_settings():
+    """Updates the global scanner settings."""
+    global scanner_settings
+    new_settings = request.get_json()
+    with data_lock:
+        for key, value in new_settings.items():
+            if key in scanner_settings:
+                try:
+                    if isinstance(scanner_settings[key], int):
+                        scanner_settings[key] = int(value)
+                    elif isinstance(scanner_settings[key], float):
+                        scanner_settings[key] = float(value)
+                    else:
+                        scanner_settings[key] = value
+                except (ValueError, TypeError):
+                    pass
+    return jsonify({"status": "success", "settings": scanner_settings})
+
 if __name__ == "__main__":
+    def background_scanner():
+        """Function to run scans in the background."""
+        while True:
+            print("Running background scanner...")
+            with data_lock:
+                current_settings = scanner_settings.copy()
+
+            from scan import run_intraday_scan
+
+            # Run intraday scan
+            intraday_results = run_intraday_scan(current_settings, cookies)
+
+            with data_lock:
+                app_state.set_latest_scan_results(intraday_results)
+                app_state.add_fired_events(intraday_results["fired"].to_dict(orient='records'))
+
+            sleep(300) # Scan every 5 minutes
+
     scanner_thread = threading.Thread(target=background_scanner, daemon=True)
     scanner_thread.start()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)

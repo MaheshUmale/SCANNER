@@ -5,8 +5,8 @@
     <title>Trading Scanner</title>
     <style>
         body { font-family: sans-serif; margin: 20px; }
-        table { border-collapse: collapse; width: 100%; }
-        td, th { border: 1px solid #ddd; padding: 6px; }
+        table { border-collapse: collapse; width: 100%; font-size: 12px; }
+        td, th { border: 1px solid #ddd; padding: 4px; text-align: left; }
         .widget { border: 1px solid #ccc; padding: 10px; margin-bottom: 20px; }
     </style>
 </head>
@@ -35,10 +35,13 @@
             <thead>
                 <tr>
                     <th>Ticker</th>
+                    <th>Breakouts</th>
                     <th>Close</th>
                     <th>Change</th>
                     <th>Volume</th>
-                    <th>Relative Volume (5min)</th>
+                    <th>Rel Vol (5m)</th>
+                    <th>Chg from Open</th>
+                    <th>Chg Abs</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -46,31 +49,41 @@
     </div>
 
     <script>
+        function formatNumber(num) {
+            if (num === null || num === undefined) return 'N/A';
+            return num.toFixed(2);
+        }
+
         async function fetchData() {
             const response = await fetch('/get_latest_data');
             const data = await response.json();
 
+            // --- Post-Market Table ---
             const postMarketTable = document.querySelector('#post-market-table tbody');
             postMarketTable.innerHTML = '';
             (data.post_market || []).forEach(stock => {
                 postMarketTable.innerHTML += `<tr>
                     <td><a href="https://in.tradingview.com/chart/?symbol=NSE:${stock.name}" target="_blank">${stock.name}</a></td>
-                    <td>${stock.close}</td>
-                    <td>${stock.change}</td>
+                    <td>${formatNumber(stock.close)}</td>
+                    <td>${formatNumber(stock.change)}%</td>
                     <td>${stock.volume}</td>
-                    <td>${stock.relative_volume_10d_calc}</td>
+                    <td>${formatNumber(stock.relative_volume_10d_calc)}</td>
                 </tr>`;
             });
 
+            // --- Intraday Table ---
             const intradayTable = document.querySelector('#intraday-table tbody');
             intradayTable.innerHTML = '';
             (data.intraday || []).forEach(stock => {
                 intradayTable.innerHTML += `<tr>
                     <td><a href="https://in.tradingview.com/chart/?symbol=NSE:${stock.name}" target="_blank">${stock.name}</a></td>
-                    <td>${stock.close}</td>
-                    <td>${stock.change}</td>
+                    <td>${stock.breakouts || 'N/A'}</td>
+                    <td>${formatNumber(stock.close)}</td>
+                    <td>${formatNumber(stock.change)}%</td>
                     <td>${stock.volume}</td>
-                    <td>${stock['relative_volume_intraday|5']}</td>
+                    <td>${formatNumber(stock['relative_volume_intraday|5'])}</td>
+                    <td>${formatNumber(stock.change_from_open)}%</td>
+                    <td>${formatNumber(stock.change_abs)}</td>
                 </tr>`;
             });
         }

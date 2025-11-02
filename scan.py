@@ -48,98 +48,72 @@ def run_post_market_scan(settings, cookies):
         print(f"Error in post-market scan: {e}")
         return pd.DataFrame()
 
-def run_intraday_scan(settings, cookies):
-    if cookies is None:
-        return pd.DataFrame()
+def build_intraday_query(settings):
+    select_cols = ['name', 'close', 'change', 'volume', 'relative_volume_intraday|5','change_from_open','change_abs']
+    # tf_filters = []
 
-    all_results = []
+    for tf in timeframes:
+    #     if tf == '': continue
+    #     select_cols.extend([
+    #         f'close{tf}',   f'volume{tf}',
+    #         f'average_volume_10d_calc{tf}', f'Value.Traded{tf}', f'ATR{tf}'
+    #     ])
+
+
+        # atr_expr = col(f'ATRP{tf}').above(1.5)
+
+        # tf_filters.append(And(rel_vol_expr, turnover_expr, atr_expr))
+
     
-    base_filters = [
+        rel_vol_expr = col(f'relative_volume_intraday|5') > 2
+
+
+
+        volSpike = [And(col(f'volume{tf}')  > VOLUME_THRESHOLDS.get(tf,50000),
+                        col(f'volume{tf}').above_pct(col(f'average_volume_10d_calc{tf}'), 2)) for tf in timeframes  ]
+
+        DCWithBreak = [And(
+                        Or(col(f'DonchCh20.Upper{tf}') > col(f'DonchCh20.Upper[1]{tf}'),
+                           col(f'DonchCh20.Upper{tf}') < col(f'DonchCh20.Upper[1]{tf}'))
+                        ) for tf in timeframes  ] # Using a subset of TFs for efficiency/stability
+
+
+        squeeze_fired_conditions = [And(col(f'BB.upper[1]{tf}') < col(f'KltChnl.upper[1]{tf}'), col(f'BB.lower[1]{tf}') > col(f'KltChnl.lower[1]{tf}'),
+                                        col(f'BB.upper{tf}') >= col(f'KltChnl.upper{tf}'), col(f'BB.lower{tf}') <= col(f'KltChnl.lower{tf}')
+
+                                        ) for tf in timeframes]
+        # turnover_expr = [col(f'Value.Traded{tf}') > VOLUME_THRESHOLDS.get(tf, 50000) for tf in timeframes]
+
+    filters = [And(
         col('beta_1_year') > 1.2,
         col('is_primary') == True,
         col('typespecs').has('common'),
         col('type') == 'stock',
+        col('market_cap_basic') > 0,
         col('exchange') == 'NSE',
+        col('volume|5') > 500000, # Using 5M volume filter for the base
+        Or(*volSpike),
+        Or(*DCWithBreak,*squeeze_fired_conditions),
+        rel_vol_expr,
         col('active_symbol') == True,
-        col('volume|5') > 500000,
-        col('relative_volume_intraday|5') > 2
-    ]
+    )]
 
-    select_cols = ['name', 'close', 'change', 'volume', 'relative_volume_intraday|5','change_from_open','change_abs']
 
-    for tf in timeframes:
-        # Common volume spike condition for this timeframe
-        vol_spike_filter = And(
-            col(f'volume{tf}') > VOLUME_THRESHOLDS.get(tf, 50000),
-            col(f'volume{tf}').above_pct(col(f'average_volume_10d_calc{tf}'), 2)
-        )
 
-        # --- Check for Donchian Breakout ---
-        donchian_break_filter = Or(
-            col(f'close{tf}').crosses(col(f'DonchCh20.Upper{tf}')),
-            col(f'close{tf}').crosses(col(f'DonchCh20.Lower{tf}'))
-        )
-        donchian_query_filters = base_filters + [vol_spike_filter, donchian_break_filter]
-        donchian_query = Query().select(*select_cols).where2(And(*donchian_query_filters)).set_markets(settings['market'])
+    return Query().select(*select_cols).where2(Or(*filters)).set_markets(settings['market'])
 
-        try:
-            print(f"Running intraday Donchian scan for timeframe: {tf or '1D'}")
-            _, df = donchian_query.get_scanner_data(cookies=cookies)
-            if df is not None and not df.empty:
-                df['breakout_tf'] = tf or '1D'
-                df['breakout_type'] = 'Donchian'
-                all_results.append(df)
-        except Exception as e:
-            print(f"Error in intraday Donchian scan for {tf or '1D'}: {e}")
-
-        # --- Check for Squeeze Breakout ---
-        squeeze_fired_filter = And(
-            col(f'BB.upper[1]{tf}') < col(f'KltChnl.upper[1]{tf}'),
-            col(f'BB.lower[1]{tf}') > col(f'KltChnl.lower[1]{tf}'),
-            Or(
-                col(f'BB.upper{tf}') >= col(f'KltChnl.upper{tf}'),
-                col(f'BB.lower{tf}') <= col(f'KltChnl.lower{tf}')
-            )
-        )
-        squeeze_query_filters = base_filters + [vol_spike_filter, squeeze_fired_filter]
-        squeeze_query = Query().select(*select_cols).where2(And(*squeeze_query_filters)).set_markets(settings['market'])
-
-        try:
-            print(f"Running intraday Squeeze scan for timeframe: {tf or '1D'}")
-            _, df = squeeze_query.get_scanner_data(cookies=cookies)
-            if df is not None and not df.empty:
-                df['breakout_tf'] = tf or '1D'
-                df['breakout_type'] = 'Squeeze'
-                all_results.append(df)
-        except Exception as e:
-            print(f"Error in intraday Squeeze scan for {tf or '1D'}: {e}")
-
-    if not all_results:
-        print("Intraday scan complete. No results found.")
+def run_intraday_scan(settings, cookies):
+    if cookies is None:
         return pd.DataFrame()
-
-    combined_df = pd.concat(all_results, ignore_index=True)
-
-    if combined_df.empty:
-        print("Intraday scan complete. No results after combining.")
+    query = build_intraday_query(settings)
+    try:
+        print("Running intraday scan...")
+        # print(query)
+        _, df = query.get_scanner_data(cookies=cookies)
+        print(df.head())
+        return df if df is not None else pd.DataFrame()
+    except Exception as e:
+        import traceback
+        print(f"Error in intraday scan: {e}")
+        traceback.print_exc()
         return pd.DataFrame()
-
-    grouped = combined_df.groupby('name')
-
-    breakout_summary = grouped.apply(lambda g: ', '.join(
-        sorted(g[['breakout_type', 'breakout_tf']].drop_duplicates().apply(
-            lambda r: f"{r['breakout_type']} ({r['breakout_tf']})", axis=1
-        ))
-    )).rename('breakouts').reset_index()
-
-    first_occurrence = grouped.first().reset_index()
-
-    final_df = pd.merge(first_occurrence, breakout_summary, on='name')
-
-    cols_order = ['name', 'breakouts'] + [col for col in select_cols if col != 'name']
-    final_df = final_df[cols_order]
-
-    print("Intraday scan complete. Aggregated results:")
-    print(final_df.head())
-
-    return final_df

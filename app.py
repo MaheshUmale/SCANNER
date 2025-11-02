@@ -58,7 +58,7 @@ def background_scanner():
 def index():
     return render_template('index.html')
 
-@app.route('/scan_post_market', methods=['POST'])
+@app.route('/scan_post_market', methods=['POST', 'GET'])
 def scan_post_market():
     """Triggers a new post-market scan."""
     with data_lock:

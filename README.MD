@@ -16,6 +16,12 @@ RSI/MACD Signals: Use momentum indicators like the Relative Strength Index (RSI)
 Stocks Hitting Intraday High/Low: Look for stocks hitting new intraday highs or recovering significantly from intraday lows, which indicates strong buying/selling pressure. 
 
 
+REF:
+https://github.com/shner-elmo/TradingView-Screener
+
+https://shner-elmo.github.io/TradingView-Screener/3.0.0/tradingview_screener.html
+
+https://shner-elmo.github.io/TradingView-Screener/fields/stocks.html
 
 
 
